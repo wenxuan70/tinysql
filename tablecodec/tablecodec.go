@@ -43,6 +43,7 @@ const (
 	RecordRowKeyLen       = prefixLen + idLen /*handle*/
 	tablePrefixLength     = 1
 	recordPrefixSepLength = 2
+	indexPrefixSepLength  = 2
 )
 
 // TableSplitKeyLen is the length of key 't{table_id}' which is used for table split.
@@ -64,6 +65,7 @@ func appendTableRecordPrefix(buf []byte, tableID int64) []byte {
 // EncodeRowKeyWithHandle encodes the table id, row handle into a kv.Key
 func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
 	buf := make([]byte, 0, RecordRowKeyLen)
+	// t[tableID]_r[rowKey]
 	buf = appendTableRecordPrefix(buf, tableID)
 	buf = codec.EncodeInt(buf, handle)
 	return buf
@@ -98,6 +100,35 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 	 *   5. understanding the coding rules is a prerequisite for implementing this function,
 	 *      you can learn it in the projection 1-2 course documentation.
 	 */
+
+	k := key
+
+	if !k.HasPrefix(tablePrefix) {
+		return 0, 0, errInvalidRecordKey.GenWithStack("invalid key - %q", key)
+	}
+
+	// 移除表ID前缀 "t"
+	k = k[tablePrefixLength:]
+
+	// 解码表ID
+	k, tableID, err = codec.DecodeInt(k)
+	if err != nil {
+		return 0, 0, errInvalidRecordKey.GenWithStack("invalid key - %q", key)
+	}
+
+	if !k.HasPrefix(recordPrefixSep) {
+		return 0, 0, errInvalidRecordKey.GenWithStack("invalid key - %q", key)
+	}
+
+	// 移除记录ID前缀 "_r"
+	k = k[recordPrefixSepLength:]
+
+	// 解码记录ID
+	_, handle, err = codec.DecodeInt(k)
+	if err != nil {
+		return 0, 0, errInvalidRecordKey.GenWithStack("invalid key - %q", key)
+	}
+
 	return
 }
 
@@ -148,7 +179,39 @@ func DecodeIndexKeyPrefix(key kv.Key) (tableID int64, indexID int64, indexValues
 	 *   5. understanding the coding rules is a prerequisite for implementing this function,
 	 *      you can learn it in the projection 1-2 course documentation.
 	 */
-	return tableID, indexID, indexValues, nil
+
+	k := key
+
+	if !k.HasPrefix(tablePrefix) {
+		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid key - %q", key)
+	}
+
+	// 移除表ID前缀 "t"
+	k = k[tablePrefixLength:]
+
+	// 解码表ID
+	k, tableID, err = codec.DecodeInt(k)
+	if err != nil {
+		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid key - %q", key)
+	}
+
+	if !k.HasPrefix(indexPrefixSep) {
+		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid key - %q", key)
+	}
+
+	// 移除索引ID前缀 "_i"
+	k = k[indexPrefixSepLength:]
+
+	// 解码索引ID
+	k, indexID, err = codec.DecodeInt(k)
+	if err != nil {
+		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid key - %q", key)
+	}
+
+	// 剩余的字节为索引值
+	indexValues = k
+
+	return
 }
 
 // DecodeIndexKey decodes the key and gets the tableID, indexID, indexValues.
